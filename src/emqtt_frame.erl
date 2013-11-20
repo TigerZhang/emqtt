@@ -257,4 +257,34 @@ opt(false)                -> 0;
 opt(true)                 -> 1;
 opt(X) when is_integer(X) -> X.
 
-
+type_name(Type) ->
+	case Type of
+		?CONNECT ->
+			<<"connect">>;
+		?CONNACK ->
+			<<"connack">>;
+		?PUBLISH ->
+			<<"publish">>;
+		?PUBACK ->
+			<<"puback">>;
+		?PUBREC ->
+			<<"pubrec">>;
+		?PUBREL ->
+			<<"pubrel">>;
+		?PUBCOMP ->
+			<<"pubcom">>;
+		?SUBSCRIBE ->
+			<<"subscribe">>;
+		?SUBACK ->
+			<<"suback">>;
+		?UNSUBSCRIBE ->
+			<<"unsubscribe">>;
+		?UNSUBACK ->
+			<<"unsuback">>;
+		?PINGREQ ->
+			<<"pingreg">>;
+		?PINGRESP ->
+			<<"pingresp">>;
+		?DISCONNECT ->
+			<<"disconnect">>
+	end.

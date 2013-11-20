@@ -4,3 +4,11 @@ var
 *.log
 rel/emqtt
 
+
+.project
+
+.settings/org.erlide.core.prefs
+
+Mnesia.nonode@nohost/schema.DAT
+
+erl_crash.dump

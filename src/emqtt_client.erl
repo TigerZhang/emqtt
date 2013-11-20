@@ -202,7 +202,7 @@ process_received_bytes(Bytes,
 		 control_throttle( State #state{ parse_state = ParseState1 }),
 		 hibernate};
 	{ok, Frame, Rest} ->
-		case process_frame(Frame, State) of
+		case process_frame(Bytes, Frame, State) of
 		{ok, State1} ->
 			PS = emqtt_frame:initial_state(),
 			process_received_bytes(
@@ -219,24 +219,54 @@ process_received_bytes(Bytes,
 		stop({shutdown, Error}, State)
     end.
 
-process_frame(Frame = #mqtt_frame{fixed = #mqtt_frame_fixed{type = Type}},
+process_frame(Bytes, Frame = #mqtt_frame{fixed = #mqtt_frame_fixed{type = Type}},
               State=#state{client_id=ClientId, keep_alive=KeepAlive}) ->
 	KeepAlive1 = emqtt_keep_alive:activate(KeepAlive),
 	case validate_frame(Type, Frame) of	
 	ok ->
 		?INFO("frame from ~s: ~p", [ClientId, Frame]),
+		%% TODO: configure option for switching handler
+		Key = erlang:integer_to_binary(Type),
+		?INFO("forward to mq: key[~p]", [Key]),
+		BytesWithHeader = internal_package_pb:encode_internalpackage({
+																	  internalpackage,
+																	  0,0,0,0,
+																	  <<"front1">>,
+																	  Bytes}),
+		_ = case msgbus_amqp_proxy:send(Key, list_to_binary(BytesWithHeader)) of
+			ok ->
+				{ok, State};
+			{_, Reason1} ->
+				?CRITICAL("forward to mq failed: key[~p] ClientId[~p] Reason[~p]",
+						  [Key, ClientId, Reason1]),
+				{err, Reason1, State};
+			Else ->
+				io:format("Uncacthed case: ~p~n", [Else]),
+				{ok, State}
+		end,
 		handle_retained(Type, Frame),
-		process_request(Type, Frame, State#state{keep_alive=KeepAlive1});
+		case command_handle_locally(Type) of
+			true ->
+				process_request(Type, Frame, State#state{keep_alive=KeepAlive1});
+			false ->
+				{ok, State#state{keep_alive=KeepAlive1}}
+		end;
+		%% process_request(Type, Frame, State#state{keep_alive=KeepAlive1});
 	{error, Reason} ->
 		{err, Reason, State}
 	end.
+
+command_handle_locally(?CONNECT) -> true;
+command_handle_locally(?DISCONNECT) -> true;
+command_handle_locally(?PINGREQ) -> true;
+command_handle_locally(_) -> false.
 
 process_request(?CONNECT,
                 #mqtt_frame{ variable = #mqtt_frame_connect{
                                           username   = Username,
                                           password   = Password,
                                           proto_ver  = ProtoVersion,
-                                          clean_sess = CleanSess,
+                                          clean_sess = _CleanSess,
 										  keep_alive = AlivePeriod,
                                           client_id  = ClientId } = Var}, #state{socket = Sock} = State) ->
     {ReturnCode, State1} =
@@ -254,7 +284,7 @@ process_request(?CONNECT,
                     true ->
 						?INFO("connect from clientid: ~s, ~p", [ClientId, AlivePeriod]),
 						ok = emqtt_registry:register(ClientId, self()),
-						KeepAlive = emqtt_keep_alive:new(AlivePeriod*1500, keep_alive_timeout),
+						KeepAlive = emqtt_keep_alive:new(AlivePeriod*3000, keep_alive_timeout),
 						{?CONNACK_ACCEPT,
 						 State #state{ will_msg   = make_will_msg(Var),
 											 client_id  = ClientId,
@@ -344,7 +374,7 @@ process_request(?UNSUBSCRIBE,
                 #mqtt_frame{
                   variable = #mqtt_frame_subscribe{message_id  = MessageId,
                                                    topic_table = Topics },
-                  payload = undefined}, #state{socket = Sock, client_id = ClientId} = State) ->
+                  payload = undefined}, #state{socket = Sock, client_id = _ClientId} = State) ->
 
 	
 	[emqtt_router:unsubscribe(Name, self()) || #mqtt_topic{name=Name} <- Topics], 
@@ -452,7 +482,7 @@ validate_frame(?PUBLISH, #mqtt_frame{variable = #mqtt_frame_publish{topic_name =
 	end;
 
 validate_frame(?UNSUBSCRIBE, #mqtt_frame{variable = #mqtt_frame_subscribe{topic_table = Topics}}) ->
-	ErrTopics = [Topic || #mqtt_topic{name=Topic, qos=Qos} <- Topics,
+	ErrTopics = [Topic || #mqtt_topic{name=Topic, qos=_Qos} <- Topics,
 						not emqtt_topic:validate({subscribe, Topic})],
 	case ErrTopics of
 	[] -> ok;

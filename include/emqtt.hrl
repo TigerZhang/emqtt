@@ -30,6 +30,8 @@
 -define(QOS_1, 1).
 -define(QOS_2, 2).
 
+-compile({parse_transform, lager_transform}).
+
 -record(mqtt_msg,            {retain,
                               qos,
                               topic,

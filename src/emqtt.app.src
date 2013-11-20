@@ -36,6 +36,26 @@
   {applications, [kernel,
                   stdlib]},
   {mod, {emqtt_app, []}},
-  {env, []}
+  {env, [
+    		{rabbitmqs, [
+          		{msgbus_rabbitmq_local, [
+			      {name,        "msgbus_rabbitmq_local"},
+			      {exchange,    <<"msgbus_amqp_proxy">>},
+			      {amqp_user,   <<"guest">>},
+			      {amqp_pass,   <<"guest">>},
+			      {amqp_vhost,  <<"/">>},
+			      {amqp_host,   "10.211.55.3"},
+			      {amqp_port,   5672}
+			  	]}
+  			]},
+			{outgoing_queues, [
+	      		{<<"1">>, <<"msgbus_mqtt_command">>},
+	      		{<<"8">>, <<"msgbus_mqtt_command">>},
+	      		{<<"12">>, <<"msgbus_mqtt_command">>}
+	      		]},
+      		{incoming_queues, [
+      			{<<"msgbus_frontend_key_">>, <<"msgbus_frontend_queue_">>}
+      			]},
+      		{node_tag, <<"front1">>}
+  	]}
  ]}.
-

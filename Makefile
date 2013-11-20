@@ -1,16 +1,20 @@
+REBAR = ./rebar -j8
 all: deps compile
 
 compile: deps
-	./rebar compile
+	${REBAR} compile
 
 deps:
-	./rebar get-deps
+	${REBAR} get-deps
 
 clean:
-	./rebar clean
+	${REBAR} clean
 
-generate:
-	./rebar generate -f
+generate: compile
+	${REBAR} generate -f
 
 relclean:
 	rm -rf rel/emqtt
+
+run: generate
+	./rel/emqtt/bin/emqtt console
