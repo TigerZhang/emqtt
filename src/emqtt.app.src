@@ -56,6 +56,7 @@
       		{incoming_queues, [
       			{<<"msgbus_frontend_key_">>, <<"msgbus_frontend_queue_">>}
       			]},
-      		{node_tag, <<"front1">>}
+      		{node_tag, <<"front1">>},
+          {uid_url,"http://113.31.65.21:8181/device/uid/?client_id="}
   	]}
  ]}.
