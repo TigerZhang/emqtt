@@ -49,7 +49,8 @@
     keep_alive,
     awaiting_ack,
     subtopics,
-    awaiting_rel}).
+    awaiting_rel,
+    protocol_version}).
 
 
 -define(FRAME_TYPE(Frame, Type),
@@ -202,7 +203,16 @@ process_received_bytes(Bytes,
                 control_throttle(State#state{parse_state = ParseState1}),
                 hibernate};
         {ok, Frame, Rest} ->
-            case process_frame(Bytes, Frame, State) of
+            State2 = case Frame#mqtt_frame.fixed#mqtt_frame_fixed.type of
+                         ?CONNECT ->
+                             State#state{
+                                client_id = Frame#mqtt_frame.variable#mqtt_frame_connect.client_id,
+                                protocol_version = Frame#mqtt_frame.variable#mqtt_frame_connect.proto_ver
+                             };
+                         _ ->
+                             State
+                     end,
+            case process_frame(Bytes, Frame, State2) of
                 {ok, State1} ->
                     PS = emqtt_frame:initial_state(),
                     process_received_bytes(
@@ -219,8 +229,12 @@ process_received_bytes(Bytes,
             stop({shutdown, Error}, State)
     end.
 
+clientid_to_uid(_ClientId) ->
+    %% TODO determine uid from client id
+    1.
+
 process_frame(Bytes, Frame = #mqtt_frame{fixed = #mqtt_frame_fixed{type = Type}},
-    State = #state{client_id = ClientId, keep_alive = KeepAlive}) ->
+    State = #state{client_id = ClientId, keep_alive = KeepAlive, protocol_version = ProtocolVersion}) ->
     KeepAlive1 = emqtt_keep_alive:activate(KeepAlive),
     case validate_frame(Type, Frame) of
         ok ->
@@ -230,8 +244,9 @@ process_frame(Bytes, Frame = #mqtt_frame{fixed = #mqtt_frame_fixed{type = Type}}
             ?INFO("forward to mq: key[~p]", [Key]),
             BytesWithHeader = internal_package_pb:encode_internalpackage({
                 internalpackage,
-                0, 0, 0, 0,
-                <<"front1">>,
+                0, 0, 0, 0, <<"front1">>,
+                ProtocolVersion, % protocol version
+                clientid_to_uid(ClientId), list_to_binary(ClientId),
                 Bytes}),
             _ = case msgbus_amqp_proxy:send(Key, list_to_binary(BytesWithHeader)) of
                     ok ->
@@ -270,7 +285,7 @@ process_request(?CONNECT,
             keep_alive = AlivePeriod,
             client_id = ClientId} = Var}, #state{socket = Sock} = State) ->
     {ReturnCode, State1} =
-        case {ProtoVersion =:= ?MQTT_PROTO_MAJOR,
+        case {(ProtoVersion =:= ?MQTT_PROTO_MAJOR) or (ProtoVersion =:= ?CLOS_MQTT_PROTO_MAJAR),
             valid_client_id(ClientId)} of
             {false, _} ->
                 {?CONNACK_PROTO_VER, State};
@@ -288,7 +303,8 @@ process_request(?CONNECT,
                         {?CONNACK_ACCEPT,
                             State#state{will_msg = make_will_msg(Var),
                             client_id = ClientId,
-                            keep_alive = KeepAlive}}
+                            keep_alive = KeepAlive,
+                            protocol_version = ProtoVersion}}
                 end
         end,
     send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?CONNACK},
