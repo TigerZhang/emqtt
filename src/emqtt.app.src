@@ -56,6 +56,16 @@
       		{incoming_queues, [
       			{<<"msgbus_frontend_key_">>, <<"msgbus_frontend_queue_">>}
       			]},
-      		{node_tag, <<"front1">>}
-  	]}
+      		{node_tag, <<"front1">>},
+            {listeners, [
+              {1883, [
+                  binary,
+                  {packet, raw},
+                  {reuseaddr, true},
+                  {backlog, 128},
+                  {nodelay, true}
+              ]}
+            ]},
+      {auth, {anonymous, []}} %internal, anonymous
+  ]}
  ]}.

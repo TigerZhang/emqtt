@@ -21,7 +21,7 @@
 
 -include("emqtt_internal.hrl").
 
--export([parse/2, initial_state/0]).
+-export([parse/2, initial_state/0, parse_frame/3]).
 -export([serialise/1]).
 
 -define(RESERVED, 0).
@@ -116,6 +116,9 @@ parse_frame(Bin, #mqtt_frame_fixed{ type = Type,
         {?PUBCOMP, <<FrameBin:Length/binary, Rest/binary>>} ->
             <<MessageId:16/big>> = FrameBin,
             wrap(Fixed, #mqtt_frame_publish { message_id = MessageId }, Rest);
+        {?SUBACK, <<FrameBin:Length/binary, Rest/binary>>} ->
+            <<MessageId:16/big, QosTable/binary>> = FrameBin,
+            wrap(Fixed, #mqtt_frame_suback {message_id = MessageId, qos_table = QosTable}, Rest);
         {Subs, <<FrameBin:Length/binary, Rest/binary>>}
           when Subs =:= ?SUBSCRIBE orelse Subs =:= ?UNSUBSCRIBE ->
             1 = Qos,

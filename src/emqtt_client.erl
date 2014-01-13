@@ -17,7 +17,7 @@
 
 -behaviour(gen_server2).
 
--export([start_link/0, go/2, info/1]).
+-export([start_link/0, go/2, info/1, make_msg/1]).
 
 -export([init/1,
     handle_call/3,
@@ -99,6 +99,16 @@ handle_call({go, Sock}, _From, _State) ->
             subtopics = [],
             awaiting_ack = gb_trees:empty(),
             awaiting_rel = gb_trees:empty()})}.
+
+handle_cast({puback, Frame}, #state{socket = Sock} = State) ->
+    %% fixme: get granted qos from package
+    GrantedQos = [1],
+
+    send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?SUBACK},
+        variable = #mqtt_frame_suback{
+            message_id = Frame#mqtt_frame.variable#mqtt_frame_suback.message_id,
+            qos_table = GrantedQos}}),
+    {noreply, State};
 
 handle_cast(Msg, State) ->
     {stop, {badmsg, Msg}, State}.

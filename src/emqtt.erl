@@ -23,6 +23,11 @@
 %%
 start() ->
 	application:start(sasl),
+    application:start(rabbit_common),
+    application:start(amqp_client),
+    application:start(protobuffs),
+    application:start(msgbus_common_utils),
+    application:start(msgbus_amqp_proxy),
 	mnesia:create_schema([node()]),	
 	mnesia:start(),
 	lager:start(),
