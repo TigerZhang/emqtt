@@ -89,47 +89,54 @@ handle_cast({package_from_mq, InternalPackage}, State) ->
         _FromTag, _ProtocolVersion, _Uid, ClientId, MqttPackage}
         = internal_package_pb:decode_internalpackage(InternalPackage),
     lager:log(info, self(), "mqtt package ~p", [MqttPackage]),
-    Frame = parse_frame_simple(MqttPackage),
+    case parse_frame_simple(MqttPackage) of
+        ignore ->
+            {noreply, State};
+        Frame ->
 %%     {ok, Frame, _} = emqtt_frame:parse(MqttPackage, none),
 %%     Retain = Frame#mqtt_frame.fixed#mqtt_frame_fixed.retain,
 %%     Qos = Frame#mqtt_frame.fixed#mqtt_frame_fixed.qos,
 %%     Dup = Frame#mqtt_frame.fixed#mqtt_frame_fixed.dup,
-    lager:log(info, self(), "mqtt frame ~p", [Frame]),
-    Type = Frame#mqtt_frame.fixed#mqtt_frame_fixed.type,
+            lager:log(info, self(), "mqtt frame ~p", [Frame]),
+            Type = Frame#mqtt_frame.fixed#mqtt_frame_fixed.type,
 
-    lager:log(info, self(), "package_from_mq ~p", [Type]),
+            lager:log(info, self(), "package_from_mq ~p", [Type]),
 
-    if
-        Type == ?PUBLISH ->
-            case ets:lookup(client, ClientId) of
-                [{_, {Pid, _MRef}}] ->
-                    Pid ! {route, emqtt_client:make_msg(Frame)};
-                [] ->
+            if
+                Type == ?PUBLISH ->
+                    case ets:lookup(client, ClientId) of
+                        [{_, {Pid, _MRef}}] ->
+                            Pid ! {route, emqtt_client:make_msg(Frame)};
+                        [] ->
+                            ignore
+                    end;
+                Type == ?SUBACK ->
+                    case ets:lookup(client, ClientId) of
+                        [{_, {Pid, _MRef}}] ->
+                            gen_server:cast(Pid, {puback, Frame});
+                        [] ->
+                            ignore
+                    end;
+                true ->
                     ignore
-            end;
-        Type == ?SUBACK ->
-            case ets:lookup(client, ClientId) of
-                [{_, {Pid, _MRef}}] ->
-                    gen_server:cast(Pid, {puback, Frame});
-                [] ->
-                    ignore
-            end;
-        true ->
-            ignore
-    end,
-    {noreply, State};
-
+            end,
+            {noreply, State}
+    end;
 handle_cast(Msg, State) ->
     {stop, {badmsg, Msg}, State}.
 
 parse_frame_simple(MqttPackage) ->
     <<Type:4, Dup:1, QoS:2, Retain:1, Length:8, Variable/binary>> = MqttPackage,
     lager:log(info, self(), "Type: ~p", [Type]),
-    {ok, Frame, _} = emqtt_frame:parse_frame(Variable,
+    case emqtt_frame:parse_frame(Variable,
         #mqtt_frame_fixed{type = Type, dup = Dup, qos = QoS, retain = Retain},
-        Length
-    ),
-    Frame.
+        Length) of
+        {ok, Frame, _} ->
+            Frame;
+        Else ->
+            lager:log(error, self(), "pase frame error: ~p", [Else]),
+            ignore
+    end.
 
 handle_info({'DOWN', MRef, process, DownPid, _Reason}, State) ->
 	ets:match_delete(client, {'_', {DownPid, MRef}}),
