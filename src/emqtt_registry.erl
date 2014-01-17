@@ -119,9 +119,26 @@ handle_cast({package_from_mq, InternalPackage}, State) ->
                     end;
                 true ->
                     ignore
-            end,
-            {noreply, State}
-    end;
+            end;
+        Type == ?PUBACK ->
+            case ets:lookup(client, ClientId) of
+                [{_, {Pid, _MRef}}] ->
+                    gen_server:cast(Pid, {puback, Frame});
+                [] ->
+                    ignore
+            end;
+        Type == ?SUBACK ->
+            case ets:lookup(client, ClientId) of
+                [{_, {Pid, _MRef}}] ->
+                    gen_server:cast(Pid, {suback, Frame});
+                [] ->
+                    ignore
+            end;
+        true ->
+            ignore
+    end,
+    {noreply, State};
+
 handle_cast(Msg, State) ->
     {stop, {badmsg, Msg}, State}.
 
