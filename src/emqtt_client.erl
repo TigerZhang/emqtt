@@ -98,28 +98,30 @@ handle_call({go, Sock}, _From, _State) ->
             message_id = 1,
             subtopics = [],
             awaiting_ack = gb_trees:empty(),
-            awaiting_rel = gb_trees:empty()})}.
+            awaiting_rel = gb_trees:empty(),
+            protocol_version = undefined})}.
 
-handle_cast({suback, Frame}, #state{socket = Sock} = State) ->
+handle_cast({suback, Frame}, #state{socket = Sock, protocol_version = ProtocolVersion} = State) ->
     %% fixme: get granted qos from package
     GrantedQos = [1],
 
     send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?SUBACK},
         variable = #mqtt_frame_suback{
             message_id = Frame#mqtt_frame.variable#mqtt_frame_suback.message_id,
-            qos_table = GrantedQos}}),
+            qos_table = GrantedQos}}, ProtocolVersion),
     {noreply, State};
 
-handle_cast({puback, Frame}, #state{socket = Sock} = State) ->
+handle_cast({puback, Frame}, #state{socket = Sock, protocol_version = ProtocolVersion} = State) ->
     send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?PUBACK},
         variable = #mqtt_frame_publish{
-            message_id = Frame#mqtt_frame.variable#mqtt_frame_publish.message_id}}),
+            message_id = Frame#mqtt_frame.variable#mqtt_frame_publish.message_id}},
+        ProtocolVersion),
     {noreply, State};
 
 handle_cast(Msg, State) ->
     {stop, {badmsg, Msg}, State}.
 
-handle_info({route, Msg}, #state{socket = Sock, message_id = MsgId} = State) ->
+handle_info({route, Msg}, #state{socket = Sock, message_id = MsgId, protocol_version = ProtocolVersion} = State) ->
 
     #mqtt_msg{retain = Retain,
     qos = Qos,
@@ -146,7 +148,7 @@ handle_info({route, Msg}, #state{socket = Sock, message_id = MsgId} = State) ->
                      end},
         payload = Payload1},
 
-    send_frame(Sock, Frame),
+    send_frame(Sock, Frame, ProtocolVersion),
 
     if
         Qos == ?QOS_0 ->
@@ -211,9 +213,9 @@ process_received_bytes(<<>>, State) ->
 
 process_received_bytes(Bytes,
     State = #state{parse_state = ParseState,
-        conn_name = ConnStr}) ->
+        conn_name = ConnStr, protocol_version = ProtocolVersion}) ->
     ?INFO("~p~n", [Bytes]),
-    case emqtt_frame:parse(Bytes, ParseState) of
+    case emqtt_frame:parse(Bytes, ParseState, ProtocolVersion) of
         {more, ParseState1} ->
             {noreply,
                 control_throttle(State#state{parse_state = ParseState1}),
@@ -299,7 +301,8 @@ process_request(?CONNECT,
             proto_ver = ProtoVersion,
             clean_sess = _CleanSess,
             keep_alive = AlivePeriod,
-            client_id = ClientId} = Var}, #state{socket = Sock} = State) ->
+            client_id = ClientId} = Var},
+    #state{socket = Sock, protocol_version = ProtocolVersion} = State) ->
     {ReturnCode, State1} =
         case {(ProtoVersion =:= ?MQTT_PROTO_MAJOR) or (ProtoVersion =:= ?CLOS_MQTT_PROTO_MAJAR),
             valid_client_id(ClientId)} of
@@ -325,7 +328,7 @@ process_request(?CONNECT,
         end,
     send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?CONNACK},
     variable = #mqtt_frame_connack{
-        return_code = ReturnCode}}),
+        return_code = ReturnCode}}, ProtocolVersion),
     {ok, State1};
 
 process_request(?PUBLISH, Frame = #mqtt_frame{
@@ -337,21 +340,21 @@ process_request(?PUBLISH,
     Frame = #mqtt_frame{
             fixed = #mqtt_frame_fixed{qos = ?QOS_1},
             variable = #mqtt_frame_publish{message_id = MsgId}},
-    State = #state{socket = Sock}) ->
+    State = #state{socket = Sock, protocol_version = ProtocolVersion}) ->
     emqtt_router:publish(make_msg(Frame)),
     send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?PUBACK},
-    variable = #mqtt_frame_publish{message_id = MsgId}}),
+    variable = #mqtt_frame_publish{message_id = MsgId}}, ProtocolVersion),
     {ok, State};
 
 process_request(?PUBLISH,
     Frame = #mqtt_frame{
             fixed = #mqtt_frame_fixed{qos = ?QOS_2},
             variable = #mqtt_frame_publish{message_id = MsgId}},
-    State = #state{socket = Sock}) ->
+    State = #state{socket = Sock, protocol_version = ProtocolVersion}) ->
     emqtt_router:publish(make_msg(Frame)),
     put({msg, MsgId}, pubrec),
     send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?PUBREC},
-    variable = #mqtt_frame_publish{message_id = MsgId}}),
+    variable = #mqtt_frame_publish{message_id = MsgId}}, ProtocolVersion),
 
     {ok, State};
 
@@ -361,25 +364,26 @@ process_request(?PUBACK, #mqtt_frame{}, State) ->
 
 process_request(?PUBREC, #mqtt_frame{
         variable = #mqtt_frame_publish{message_id = MsgId}},
-    State = #state{socket = Sock}) ->
+    State = #state{socket = Sock, protocol_version = ProtocolVersion}) ->
     %TODO: fixme later
     send_frame(Sock,
         #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?PUBREL},
-        variable = #mqtt_frame_publish{message_id = MsgId}}),
+        variable = #mqtt_frame_publish{message_id = MsgId}}, ProtocolVersion),
     {ok, State};
 
 process_request(?PUBREL,
     #mqtt_frame{
             variable = #mqtt_frame_publish{message_id = MsgId}},
-    State = #state{socket = Sock}) ->
+    State = #state{socket = Sock, protocol_version = ProtocolVersion}) ->
     erase({msg, MsgId}),
     send_frame(Sock,
         #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?PUBCOMP},
-        variable = #mqtt_frame_publish{message_id = MsgId}}),
+        variable = #mqtt_frame_publish{message_id = MsgId}}, ProtocolVersion),
     {ok, State};
 
 process_request(?PUBCOMP, #mqtt_frame{
-        variable = #mqtt_frame_publish{message_id = _MsgId}}, State) ->
+        variable = #mqtt_frame_publish{message_id = _MsgId}},
+    State = #state{socket = _Sock, protocol_version = _ProtocolVersion}) ->
     %TODO: fixme later
     {ok, State};
 
@@ -388,7 +392,7 @@ process_request(?SUBSCRIBE,
             variable = #mqtt_frame_subscribe{message_id = MessageId,
                 topic_table = Topics},
             payload = undefined},
-    #state{socket = Sock} = State) ->
+    #state{socket = Sock, protocol_version = ProtocolVersion} = State) ->
 
     [emqtt_router:subscribe({Name, Qos}, self()) ||
         #mqtt_topic{name = Name, qos = Qos} <- Topics],
@@ -398,7 +402,7 @@ process_request(?SUBSCRIBE,
     send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?SUBACK},
     variable = #mqtt_frame_suback{
         message_id = MessageId,
-        qos_table = GrantedQos}}),
+        qos_table = GrantedQos}}, ProtocolVersion),
 
     {ok, State};
 
@@ -406,21 +410,24 @@ process_request(?UNSUBSCRIBE,
     #mqtt_frame{
             variable = #mqtt_frame_subscribe{message_id = MessageId,
                 topic_table = Topics},
-            payload = undefined}, #state{socket = Sock, client_id = _ClientId} = State) ->
-
+            payload = undefined},
+    #state{socket = Sock, client_id = _ClientId, protocol_version = ProtocolVersion} = State) ->
 
     [emqtt_router:unsubscribe(Name, self()) || #mqtt_topic{name = Name} <- Topics],
 
     send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?UNSUBACK},
-    variable = #mqtt_frame_suback{message_id = MessageId}}),
+    variable = #mqtt_frame_suback{message_id = MessageId}}, ProtocolVersion),
 
     {ok, State};
 
-process_request(?PINGREQ, #mqtt_frame{}, #state{socket = Sock, keep_alive = KeepAlive} = State) ->
+process_request(?PINGREQ, #mqtt_frame{},
+    #state{socket = Sock, keep_alive = KeepAlive,
+        protocol_version = ProtocolVersion} = State) ->
     %?INFO("PINGREQ...",[]),
     %Keep alive timer
     KeepAlive1 = emqtt_keep_alive:reset(KeepAlive),
-    send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?PINGRESP}}),
+    send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?PINGRESP}},
+        ProtocolVersion),
     {ok, State#state{keep_alive = KeepAlive1}};
 
 process_request(?DISCONNECT, #mqtt_frame{}, State = #state{client_id = ClientId}) ->
@@ -455,8 +462,8 @@ send_will_msg(#state{will_msg = undefined}) ->
 send_will_msg(#state{will_msg = WillMsg}) ->
     emqtt_router:publish(WillMsg).
 
-send_frame(Sock, Frame) ->
-    erlang:port_command(Sock, emqtt_frame:serialise(Frame)).
+send_frame(Sock, Frame, ProtocolVersion) ->
+    erlang:port_command(Sock, emqtt_frame:serialise(Frame, ProtocolVersion)).
 
 %%----------------------------------------------------------------------------
 network_error(Reason,

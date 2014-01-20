@@ -22,7 +22,7 @@
 -define(MQTT_PROTO_MAJOR, 3).
 -define(MQTT_PROTO_MINOR, 1).
 
--define(CLOS_MQTT_PROTO_MAJAR, 4).
+-define(CLOS_MQTT_PROTO_MAJAR, 19).
 
 %% frame types
 
