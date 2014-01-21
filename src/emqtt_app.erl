@@ -36,7 +36,8 @@
 start(_StartType, _StartArgs) ->
 	?INFO("starting emqtt on node '~s'", [node()]),
 	{ok, Listeners} = application:get_env(listeners),
-    {ok, SupPid} = emqtt_sup:start_link(Listeners),
+    {ok, NodeTag} = application:get_env(node_tag),
+    {ok, SupPid} = emqtt_sup:start_link({Listeners, NodeTag}),
 	register(emqtt, self()),
 	?INFO_MSG("emqtt broker is running now."),
 	{ok, SupPid}.

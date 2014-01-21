@@ -17,7 +17,7 @@
 
 -behaviour(gen_server2).
 
--export([start_link/0, go/2, info/1, make_msg/1]).
+-export([start_link/0, go/3, info/1, make_msg/1]).
 
 -export([init/1,
     handle_call/3,
@@ -50,7 +50,8 @@
     awaiting_ack,
     subtopics,
     awaiting_rel,
-    protocol_version}).
+    protocol_version,
+    node_tag}).
 
 
 -define(FRAME_TYPE(Frame, Type),
@@ -59,8 +60,8 @@
 start_link() ->
     gen_server2:start_link(?MODULE, [], []).
 
-go(Pid, Sock) ->
-    gen_server2:call(Pid, {go, Sock}).
+go(Pid, NodeTag, Sock) ->
+    gen_server2:call(Pid, {go, NodeTag, Sock}).
 
 info(Pid) ->
     gen_server2:call(Pid, info).
@@ -79,7 +80,7 @@ handle_call(info, _From, #state{conn_name = ConnName,
         {client_id, ClientId}],
     {reply, Info, State};
 
-handle_call({go, Sock}, _From, _State) ->
+handle_call({go, NodeTag, Sock}, _From, _State) ->
     process_flag(trap_exit, true),
     ok = throw_on_error(
         inet_error, fun() -> emqtt_net:tune_buffer_size(Sock) end),
@@ -99,7 +100,8 @@ handle_call({go, Sock}, _From, _State) ->
             subtopics = [],
             awaiting_ack = gb_trees:empty(),
             awaiting_rel = gb_trees:empty(),
-            protocol_version = undefined})}.
+            protocol_version = undefined,
+            node_tag = NodeTag})}.
 
 handle_cast({suback, Frame}, #state{socket = Sock, protocol_version = ProtocolVersion} = State) ->
     %% fixme: get granted qos from package
@@ -252,7 +254,8 @@ clientid_to_uid(_ClientId) ->
     1.
 
 process_frame(Bytes, Frame = #mqtt_frame{fixed = #mqtt_frame_fixed{type = Type}},
-    State = #state{client_id = ClientId, keep_alive = KeepAlive, protocol_version = ProtocolVersion}) ->
+    State = #state{client_id = ClientId, keep_alive = KeepAlive,
+        protocol_version = ProtocolVersion, node_tag = NodeTag}) ->
     KeepAlive1 = emqtt_keep_alive:activate(KeepAlive),
     case validate_frame(Type, Frame) of
         ok ->
@@ -262,7 +265,8 @@ process_frame(Bytes, Frame = #mqtt_frame{fixed = #mqtt_frame_fixed{type = Type}}
             ?INFO("forward to mq: key[~p]", [Key]),
             BytesWithHeader = internal_package_pb:encode_internalpackage({
                 internalpackage,
-                0, 0, 0, 0, <<"front1">>,
+                0, 0, 0, 0,
+                NodeTag,
                 ProtocolVersion, % protocol version
                 clientid_to_uid(ClientId), list_to_binary(ClientId),
                 Bytes}),

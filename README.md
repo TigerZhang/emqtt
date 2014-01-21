@@ -25,6 +25,10 @@ deloy
 
 cp -R rel/emqtt $INSTALL_DIR
 
+# config
+
+1. node_tag. frontend server 标签，用来做 rabbitmq route key 后缀，每个 frontend server 的 node_tag 必须不同。
+
 start
 ======
 

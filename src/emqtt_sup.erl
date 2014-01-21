@@ -33,8 +33,8 @@
 %% ===================================================================
 %% API functions
 %% ===================================================================
-start_link(Listeners) ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, [Listeners]).
+start_link({Listeners, NodeTag}) ->
+    supervisor:start_link({local, ?MODULE}, ?MODULE, [{Listeners, NodeTag}]).
 
 
 start_child(ChildSpec) when is_tuple(ChildSpec) ->
@@ -51,7 +51,7 @@ start_child(Mod, Type) when is_atom(Mod) and is_atom(Type) ->
 %% Supervisor callbacks
 %% ===================================================================
 
-init([Listeners]) ->
+init([{Listeners, NodeTag}]) ->
     {ok, { {one_for_all, 5, 10}, [
 		?CHILD(emqtt_auth, worker),
 		?CHILD(emqtt_retained, worker),
@@ -59,11 +59,11 @@ init([Listeners]) ->
 		?CHILD(emqtt_registry, worker),
 		?CHILD(emqtt_client_monitor, worker),
 		?CHILD(emqtt_client_sup, supervisor)
-		| listener_children(Listeners) ]}
+		| listener_children(Listeners, NodeTag) ]}
 	}.
 
-listener_children(Listeners) ->
+listener_children(Listeners, NodeTag) ->
 	lists:append([emqtt_listener:spec(Listener, 
-		{emqtt_client_sup, start_client, []}) || Listener <- Listeners]).
+		{emqtt_client_sup, start_client, [NodeTag]}) || Listener <- Listeners]).
 
 
