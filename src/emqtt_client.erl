@@ -123,12 +123,13 @@ handle_cast({puback, Frame}, #state{socket = Sock, protocol_version = ProtocolVe
 handle_cast(Msg, State) ->
     {stop, {badmsg, Msg}, State}.
 
-handle_info({route, Msg}, #state{socket = Sock, message_id = MsgId, protocol_version = ProtocolVersion} = State) ->
+handle_info({route, Msg}, #state{socket = Sock, protocol_version = ProtocolVersion} = State) ->
 
     #mqtt_msg{retain = Retain,
     qos = Qos,
     topic = Topic,
     dup = Dup,
+    message_id = MessageId,
     payload = Payload,
     encoder = Encoder} = Msg,
 
@@ -146,7 +147,7 @@ handle_info({route, Msg}, #state{socket = Sock, message_id = MsgId, protocol_ver
         variable = #mqtt_frame_publish{topic_name = Topic,
         message_id = if
                          Qos == ?QOS_0 -> undefined;
-                         true -> MsgId
+                         true -> MessageId
                      end},
         payload = Payload1},
 
