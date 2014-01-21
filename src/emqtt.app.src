@@ -73,6 +73,7 @@
                   {nodelay, true}
               ]}
             ]},
-      {auth, {anonymous, []}} %internal, anonymous
-  ]}
+            {auth, {anonymous, []}}, %internal, anonymous
+            {uid_url,"http://113.31.65.21:8181/device/uid/?client_id="}
+  	]}
  ]}.

@@ -35,7 +35,6 @@
 -include_lib("elog/include/elog.hrl").
 
 -define(CLIENT_ID_MAXLEN, 23).
-
 -record(state, {socket,
     conn_name,
     await_recv,
@@ -67,6 +66,7 @@ info(Pid) ->
     gen_server2:call(Pid, info).
 
 init([]) ->
+
     {ok, undefined, hibernate, {backoff, 1000, 1000, 10000}}.
 
 handle_call(duplicate_id, _From, State = #state{conn_name = ConnName, client_id = ClientId}) ->
@@ -251,7 +251,22 @@ process_received_bytes(Bytes,
 
 clientid_to_uid(_ClientId) ->
     %% TODO determine uid from client id
-    1.
+  {ok, Url} =   application:get_env(uid_url),
+  Http_url = lists:append(Url,_ClientId)       ,
+  {ok, {{_Version, ReturnCode, _ReasonPhrase}, _Headers, Body}} = httpc:request(Http_url)    ,
+  case ReturnCode of
+       200 ->
+         ?INFO("Get Uid: ~p~n", [Body]),
+         Uid = list_to_integer(Body),
+         case Uid of
+          -1 ->   ?ERROR("Uid is not existr: ~p~n", [_ClientId]);
+          -2 ->    ?ERROR("Server error: ~p~n", [Uid]);
+           _0ther -> Uid
+         end        ;
+      _Other ->    ?ERROR("Uncacthed case: ~p~n", [ReturnCode])
+    end .
+
+
 
 process_frame(Bytes, Frame = #mqtt_frame{fixed = #mqtt_frame_fixed{type = Type}},
     State = #state{client_id = ClientId, keep_alive = KeepAlive,
