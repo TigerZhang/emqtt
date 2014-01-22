@@ -74,6 +74,8 @@
               ]}
             ]},
             {auth, {anonymous, []}}, %internal, anonymous
-            {uid_url,"http://113.31.65.21:8181/device/uid/?client_id="}
+            {uid_url,"http://113.31.65.21:8181/device/uid/?client_id="}, %% clientid_to_uid service
+      {force_correct_uid, false} %% false: 在 clientid_to_uid 没有配置或者出错时，产生一个随机 uid
+                                 %% true: 在 clientid_to_uid 没有配置或者出错时，返回 clientid 不合法，断开当前链接
   	]}
  ]}.

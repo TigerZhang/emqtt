@@ -50,7 +50,8 @@
     subtopics,
     awaiting_rel,
     protocol_version,
-    node_tag}).
+    node_tag,
+    uid}).
 
 
 -define(FRAME_TYPE(Frame, Type),
@@ -66,7 +67,7 @@ info(Pid) ->
     gen_server2:call(Pid, info).
 
 init([]) ->
-
+    random:seed(erlang:now()),
     {ok, undefined, hibernate, {backoff, 1000, 1000, 10000}}.
 
 handle_call(duplicate_id, _From, State = #state{conn_name = ConnName, client_id = ClientId}) ->
@@ -101,7 +102,8 @@ handle_call({go, NodeTag, Sock}, _From, _State) ->
             awaiting_ack = gb_trees:empty(),
             awaiting_rel = gb_trees:empty(),
             protocol_version = undefined,
-            node_tag = NodeTag})}.
+            node_tag = NodeTag,
+            uid = undefined})}.
 
 handle_cast({suback, Frame}, #state{socket = Sock, protocol_version = ProtocolVersion} = State) ->
     %% fixme: get granted qos from package
@@ -250,27 +252,52 @@ process_received_bytes(Bytes,
             stop({shutdown, Error}, State)
     end.
 
-clientid_to_uid(_ClientId) ->
+clientid_to_uid(ClientId) ->
     %% TODO determine uid from client id
-    1.
-%%     {ok, Url} = application:get_env(uid_url),
-%%     Http_url = lists:append(Url, _ClientId),
-%%     {ok, {{_Version, ReturnCode, _ReasonPhrase}, _Headers, Body}} = httpc:request(Http_url),
-%%     case ReturnCode of
-%%         200 ->
-%%             ?INFO("Get Uid: ~p~n", [Body]),
-%%             Uid = list_to_integer(Body),
-%%             case Uid of
-%%                 -1 -> ?ERROR("Uid is not existr: ~p~n", [_ClientId]);
-%%                 -2 -> ?ERROR("Server error: ~p~n", [Uid]);
-%%                 _0ther -> Uid
-%%             end;
-%%         _Other -> ?ERROR("Uncacthed case: ~p~n", [ReturnCode])
-%%     end.
+    ResovedUid = case application:get_env(uid_url) of
+        {ok, Url} ->
+            Http_url = lists:append(Url, ClientId),
+            {ok, {{_Version, ReturnCode, _ReasonPhrase}, _Headers, Body}} = httpc:request(Http_url),
+            case ReturnCode of
+                200 ->
+                    ?INFO("Get Uid: ~p~n", [Body]),
+                    Uid = list_to_integer(Body),
+                    case Uid of
+                        -1 ->
+                            ?ERROR("Uid is not existed: ~p~n", [ClientId]),
+                            {error, <<"uid is not existed">>};
+                        -2 ->
+                            ?ERROR("Server error: ~p~n", [Uid]),
+                            {error, <<"server error">>};
+                        _0ther ->
+                            {ok, Uid}
+                    end;
+                _Other ->
+                    ?ERROR("Uncacthed case: ~p~n", [ReturnCode]),
+                    {error, Body}
+            end;
+        _ ->
+            {error, <<"no uid_url configured">>}
+    end,
+    case ResovedUid of
+        {error, Error} ->
+            case application:get_env(forced_correct_uid) of
+            {ok, true} ->
+                {error, Error};
+            _ ->
+                %% generate a random uid
+                Uid2 = random:uniform(16#ffffffffffffffff),
+                ?ERROR("Generate a random uid ~p", [Uid2]),
+                {ok, Uid2}
+            end;
+        {ok, _} ->
+            ResovedUid
+    end.
 
 process_frame(Bytes, Frame = #mqtt_frame{fixed = #mqtt_frame_fixed{type = Type}},
     State = #state{client_id = ClientId, keep_alive = KeepAlive,
-        protocol_version = ProtocolVersion, node_tag = NodeTag}) ->
+        protocol_version = ProtocolVersion, node_tag = NodeTag,
+        uid = Uid}) ->
     KeepAlive1 = emqtt_keep_alive:activate(KeepAlive),
     case validate_frame(Type, Frame) of
         ok ->
@@ -278,34 +305,55 @@ process_frame(Bytes, Frame = #mqtt_frame{fixed = #mqtt_frame_fixed{type = Type}}
             %% TODO: configure option for switching handler
             Key = erlang:integer_to_binary(Type),
             ?INFO("forward to mq: key[~p]", [Key]),
-            BytesWithHeader = internal_package_pb:encode_internalpackage({
-                internalpackage,
-                0, 0, 0, 0,
-                NodeTag,
-                ProtocolVersion, % protocol version
-                clientid_to_uid(ClientId), list_to_binary(ClientId),
-                Bytes}),
-            _ = case msgbus_amqp_proxy:send(Key, list_to_binary(BytesWithHeader)) of
-                    ok ->
-                        {ok, State};
-                    {_, Reason1} ->
-                        ?CRITICAL("forward to mq failed: key[~p] ClientId[~p] Reason[~p]",
-                            [Key, ClientId, Reason1]),
-                        {err, Reason1, State};
-                    Else ->
-                        io:format("Uncacthed case: ~p~n", [Else]),
-                        {ok, State}
-                end,
-            handle_retained(Type, Frame),
-            case command_handle_locally(Type) of
-                true ->
-                    process_request(Type, Frame, State#state{keep_alive = KeepAlive1});
-                false ->
-                    {ok, State#state{keep_alive = KeepAlive1}}
+            {Uid2, State2} = make_sure_uid(Uid, ClientId, State),
+            case {Uid2, State2} of
+                {error, Error} ->
+                    {error, Error};
+                _ ->
+                    forward_package_to_mq(NodeTag, ProtocolVersion, Uid2, ClientId, Bytes, Key, State2),
+                    handle_retained(Type, Frame),
+                    case command_handle_locally(Type) of
+                        true ->
+                            process_request(Type, Frame, State2#state{keep_alive = KeepAlive1});
+                        false ->
+                            {ok, State2#state{keep_alive = KeepAlive1}}
+                    end
             end;
     %% process_request(Type, Frame, State#state{keep_alive=KeepAlive1});
         {error, Reason} ->
             {err, Reason, State}
+    end.
+
+forward_package_to_mq(NodeTag, ProtocolVersion, Uid2, ClientId, Bytes, Key, State2) ->
+    BytesWithHeader = internal_package_pb:encode_internalpackage({
+        internalpackage,
+        0, 0, 0, 0,
+        NodeTag,
+        ProtocolVersion, % protocol version
+        Uid2, list_to_binary(ClientId),
+        Bytes}),
+    case msgbus_amqp_proxy:send(Key, list_to_binary(BytesWithHeader)) of
+        ok ->
+            {ok, State2};
+        {_, Reason1} ->
+            ?CRITICAL("forward to mq failed: key[~p] ClientId[~p] Reason[~p]",
+                [Key, ClientId, Reason1]),
+            {err, Reason1, State2};
+        Else ->
+            io:format("Uncacthed case: ~p~n", [Else]),
+            {ok, State2}
+    end.
+
+make_sure_uid(Uid, ClientId, State) ->
+    case Uid of
+        undefined ->
+            case clientid_to_uid(ClientId) of
+                {ok, Uid3} ->
+                    {Uid3, State#state{uid = Uid3}};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        _ -> {Uid, State}
     end.
 
 command_handle_locally(?CONNECT) -> true;
