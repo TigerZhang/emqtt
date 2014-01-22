@@ -120,7 +120,8 @@ parse_frame(Bin, #mqtt_frame_fixed{ type = Type,
             wrap(Fixed, #mqtt_frame_publish { message_id = MessageId }, Rest);
         {?SUBACK, <<FrameBin:Length/binary, Rest/binary>>} ->
             <<MessageId:MessageIdLen/big, QosTable/binary>> = FrameBin,
-            wrap(Fixed, #mqtt_frame_suback {message_id = MessageId, qos_table = QosTable}, Rest);
+            wrap(Fixed, #mqtt_frame_suback {message_id = MessageId,
+                qos_table = binary_to_list(QosTable)}, Rest);
         {Subs, <<FrameBin:Length/binary, Rest/binary>>}
           when Subs =:= ?SUBSCRIBE orelse Subs =:= ?UNSUBSCRIBE ->
             1 = Qos,

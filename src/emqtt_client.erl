@@ -106,8 +106,8 @@ handle_call({go, NodeTag, Sock}, _From, _State) ->
             uid = undefined})}.
 
 handle_cast({suback, Frame}, #state{socket = Sock, protocol_version = ProtocolVersion} = State) ->
-    %% fixme: get granted qos from package
-    GrantedQos = [1],
+    GrantedQos = Frame#mqtt_frame.variable#mqtt_frame_suback.qos_table,
+    ?DEBUG("GrantedQos ~p", [GrantedQos]),
 
     send_frame(Sock, #mqtt_frame{fixed = #mqtt_frame_fixed{type = ?SUBACK},
         variable = #mqtt_frame_suback{
@@ -189,8 +189,8 @@ handle_info(keep_alive_timeout, #state{keep_alive = KeepAlive} = State) ->
 handle_info(Info, State) ->
     {stop, {badinfo, Info}, State}.
 
-terminate(_Reason, #state{client_id = ClientId, keep_alive = KeepAlive}) ->
-    ok = emqtt_registry:unregister(ClientId),
+terminate(_Reason, #state{client_id = ClientId, keep_alive = KeepAlive, uid = Uid}) ->
+    ok = emqtt_registry:unregister({ClientId, Uid}),
     emqtt_keep_alive:cancel(KeepAlive),
     ok.
 
@@ -286,7 +286,7 @@ clientid_to_uid(ClientId) ->
                 {error, Error};
             _ ->
                 %% generate a random uid
-                Uid2 = random:uniform(16#ffffffffffffffff),
+                Uid2 = random:uniform(16#000fffffffffffff),
                 ?ERROR("Generate a random uid ~p", [Uid2]),
                 {ok, Uid2}
             end;
@@ -369,7 +369,8 @@ process_request(?CONNECT,
             clean_sess = _CleanSess,
             keep_alive = AlivePeriod,
             client_id = ClientId} = Var},
-    #state{socket = Sock, protocol_version = ProtocolVersion} = State) ->
+    #state{socket = Sock, protocol_version = ProtocolVersion,
+        uid = Uid} = State) ->
     {ReturnCode, State1} =
         case {(ProtoVersion =:= ?MQTT_PROTO_MAJOR) or (ProtoVersion =:= ?CLOS_MQTT_PROTO_MAJAR),
             valid_client_id(ClientId)} of
@@ -383,8 +384,8 @@ process_request(?CONNECT,
                         ?ERROR_MSG("MQTT login failed - no credentials"),
                         {?CONNACK_CREDENTIALS, State};
                     true ->
-                        ?INFO("connect from clientid: ~s, ~p", [ClientId, AlivePeriod]),
-                        ok = emqtt_registry:register(ClientId, self()),
+                        ?INFO("connect from clientid: ~s, ~p, ~p", [ClientId, Uid, AlivePeriod]),
+                        ok = emqtt_registry:register({ClientId, Uid}, self()),
                         KeepAlive = emqtt_keep_alive:new(AlivePeriod * 3000, keep_alive_timeout),
                         {?CONNACK_ACCEPT,
                             State#state{will_msg = make_will_msg(Var),

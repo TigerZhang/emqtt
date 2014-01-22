@@ -46,16 +46,17 @@ start_link() ->
 size() ->
 	ets:info(client, size).
 
-register(ClientId, Pid) ->
-    gen_server2:cast(?SERVER, {register, ClientId, Pid}).
+register({ClientId, Uid}, Pid) ->
+    gen_server2:cast(?SERVER, {register, {ClientId, Uid}, Pid}).
 
-unregister(ClientId) ->
-    gen_server2:cast(?SERVER, {unregister, ClientId}).
+unregister({ClientId, Uid}) ->
+    gen_server2:cast(?SERVER, {unregister, {ClientId, Uid}}).
 
 %%----------------------------------------------------------------------------
 
 init([]) ->
 	ets:new(client, [set, protected, named_table]),
+    ets:new(uid, [set, protected, named_table]),
 	?INFO("~p is started.", [?MODULE]),
     {ok, #state{}}. % clientid -> {pid, monitor}
 
@@ -63,7 +64,7 @@ init([]) ->
 handle_call(Req, _From, State) ->
     {stop, {badreq, Req}, State}.
 
-handle_cast({register, ClientId, Pid}, State) ->
+handle_cast({register, {ClientId, Uid}, Pid}, State) ->
 	case ets:lookup(client, ClientId) of
 	[{_, {OldPid, MRef}}] ->
 		catch gen_server2:call(OldPid, duplicate_id),
@@ -71,10 +72,12 @@ handle_cast({register, ClientId, Pid}, State) ->
 	[] ->
 		ignore
 	end,
-	ets:insert(client, {ClientId, {Pid, erlang:monitor(process, Pid)}}),
+    ProcessInfo = {Pid, erlang:monitor(process, Pid)},
+	ets:insert(client, {ClientId, ProcessInfo}),
+    ets:insert(uid, {Uid, ProcessInfo}),
     {noreply, State};
 
-handle_cast({unregister, ClientId}, State) ->
+handle_cast({unregister, {ClientId, Uid}}, State) ->
 	case ets:lookup(client, ClientId) of
 	[{_, {_Pid, MRef}}] ->
 		erlang:demonitor(MRef),
@@ -82,11 +85,17 @@ handle_cast({unregister, ClientId}, State) ->
 	[] ->
 		ignore
 	end,
+    case ets:lookup(uid, Uid) of
+        [{_, {_, _}}] ->
+            ets:delete(uid, Uid);
+        [] ->
+            ignore
+    end,
 	{noreply, State};
 
 handle_cast({package_from_mq, InternalPackage}, State) ->
     {internalpackage, _FromIp, _FromPort, _ToIp, _ToPort,
-        _FromTag, ProtocolVersion, _Uid, ClientId, MqttPackage}
+        _FromTag, ProtocolVersion, Uid, ClientId, MqttPackage}
         = internal_package_pb:decode_internalpackage(InternalPackage),
     lager:log(info, self(), "mqtt package ~p", [MqttPackage]),
     case parse_frame_simple(MqttPackage, ProtocolVersion) of
@@ -104,21 +113,21 @@ handle_cast({package_from_mq, InternalPackage}, State) ->
 
             if
                 Type == ?PUBLISH ->
-                    case ets:lookup(client, ClientId) of
+                    case ets:lookup(uid, Uid) of
                         [{_, {Pid, _MRef}}] ->
                             Pid ! {route, emqtt_client:make_msg(Frame)};
                         [] ->
                             ignore
                     end;
                 Type == ?PUBACK ->
-                    case ets:lookup(client, ClientId) of
+                    case ets:lookup(uid, Uid) of
                         [{_, {Pid, _MRef}}] ->
                             gen_server:cast(Pid, {puback, Frame});
                         [] ->
                             ignore
                     end;
                 Type == ?SUBACK ->
-                    case ets:lookup(client, ClientId) of
+                    case ets:lookup(uid, Uid) of
                         [{_, {Pid, _MRef}}] ->
                             gen_server:cast(Pid, {suback, Frame});
                         [] ->
